@@ -27,3 +27,9 @@ ckpts*
 
 .ipynb_checkpoints
 *.ipynb
+
+shards/
+llava-v1.5-13b
+llava_pb.sh
+llava_wds-multi.out
+llava_wds-multi.err
