@@ -130,7 +130,7 @@ def worker(number):
   print(f"Worker {number}: Dataset loaded.")  # Indicates successful dataset loading.
 
   print("dataset loaded")
-  loader = multi.MultiLoader(ds, workers=8)
+  loader = multi.MultiLoader(ds, workers=1)  # Workers=1 seems to solve deadlock issue and no decrease in throughput.
   print(f"Worker {number}: Data loader initialized.")  # Indicates successful loader initialization.
 
   image_key = "img"
