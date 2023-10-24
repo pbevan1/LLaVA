@@ -168,7 +168,7 @@ def worker(number):
                 #print(type(raw_image))
                 caption_instruction = ('Can you please describe this image in up to two paragraphs? Please specify any objects within the image, backgrounds, scenery, interactions, and gestures or poses. If they are multiple of any object, please specify how many. Is there text in the image, and if so, what does it say? If there is any lighting in the image, can you identify where it is and what it looks like? What style is the image? If there are people or characters in the image, what emotions are they conveying? Please keep your descriptions factual and terse but complete. DO NOT add any unnecessary speculation about the things that are not part of the image such as "the image is inspiring to viewers" or "seeing this makes you feel joy". DO NOT add things such as "creates a unique and entertaining visual", as these descriptions are interpretations and not a part of the image itself. The description should be purely factual, with no subjective speculation. Make sure to include the style of the image, for example cartoon, photograph, 3d render etc. Start with the words "This image showcases":')
 
-                cap = get_caption(raw_image , caption_instruction, i, tokenizer, model, image_processor)
+                cap = get_caption(raw_image, caption_instruction, i, tokenizer, model, image_processor)
                 # print(f"Worker {number} caption generated: {cap}")
 
                 # Reset the alarm
@@ -202,25 +202,23 @@ def start_worker_on_specific_gpu(gpu_id):
 
 
 def read_checkpoint(worker_number):
+    checkpoint_path = f"captioning_checkpoints/checkpoint_{worker_number}.json"
     try:
-        with open("checkpoint.json", "r") as f:
-            checkpoints = json.load(f)
-        return checkpoints.get(str(worker_number), 0)
+        with open(checkpoint_path, "r") as f:
+            checkpoint = json.load(f)
+        return checkpoint.get("index", 0)
     except FileNotFoundError:
         return 0
 
 
 def update_checkpoint(worker_number, index):
-    try:
-        with open("checkpoint.json", "r") as f:
-            checkpoints = json.load(f)
-    except FileNotFoundError:
-        checkpoints = {}
-        
-    checkpoints[str(worker_number)] = index
+    checkpoint_path = f"captioning_checkpoints/checkpoint_{worker_number}.json"
+    os.makedirs("captioning_checkpoints", exist_ok=True)
+
+    checkpoint = {"index": index}
     
-    with open("checkpoint.json", "w") as f:
-        json.dump(checkpoints, f)
+    with open(checkpoint_path, "w") as f:
+        json.dump(checkpoint, f)
 
 
 # Function to read API key from a file
