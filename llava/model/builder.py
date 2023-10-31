@@ -21,6 +21,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAn
 import torch
 from llava.model import *
 from llava.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from vllm import LLM, SamplingParams
 
 
 def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda"):
@@ -135,6 +136,7 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
         model.resize_token_embeddings(len(tokenizer))
 
         vision_tower = model.get_vision_tower()
+        print("Got vision tower")
         if not vision_tower.is_loaded:
             vision_tower.load_model()
         vision_tower.to(device=device, dtype=torch.float16)

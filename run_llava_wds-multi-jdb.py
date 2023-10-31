@@ -33,6 +33,21 @@ import wandb
 import GPUtil
 import json
 import signal
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+
+def initDataParallelization(backend='gloo'):
+    # "MasterAddr and MasterPort, among other variables are initialized by SLURM
+
+    world_size = int(os.environ["WORLD_SIZE"])
+    ngpus_per_node = torch.cuda.device_count()
+    rank = int(os.environ['SLURM_PROCID'])
+    localGpu = rank % ngpus_per_node
+    availableDevices = os.environ['CUDA_VISIBLE_DEVICES']
+
+    print("Starting init for", rank, "World Size", world_size, "localGpu:", localGpu, "AvailableGPUs", availableDevices)
+    dist.init_process_group(backend, rank=rank, world_size=world_size)
+    return rank, localGpu, world_size
 
 
 def get_gpu_status():
@@ -109,7 +124,7 @@ def worker(number):
   print(f"Worker {number}: Model loaded.")  # Indicates successful model loading.
 
 #   stepsize = int( 520000 / 8  )
-  total_files = 521
+  total_files = 10
   num_processes = 8
   stepsize = total_files // num_processes  # This will give 65
 
@@ -119,10 +134,10 @@ def worker(number):
 
   def get_dataset():
     print(f"Worker {number}: Generating dataset URLs...")  # Before generating URLs
-    urls = [f'/fsx/llaver/LLaVA/pop/{i:05d}.tar' for i in [x for x in list(range(end_tar)) if x >= start_from_tar]] # 231350
+    urls = [f's3://laion-west/JourneyDB_webdataset/{i:03d}.tar' for i in [x for x in list(range(end_tar)) if x >= start_from_tar]] # 231350
     print(f"Worker {number}: Loading dataset...")  # Before loading the dataset
-    #urls2 = [f'pipe:aws s3 cp {url} -' for url in urls]
-    dataset = wds.WebDataset(urls, handler=wds.ignore_and_continue)
+    urls2 = [f'pipe:aws s3 cp {url} -' for url in urls]
+    dataset = wds.WebDataset(urls2, handler=wds.ignore_and_continue)
     # print(urls)
     return dataset
 
@@ -138,7 +153,7 @@ def worker(number):
   maxsize=1e9
   maxcount=100000
   shards = "./shards/" 
-  shard_prefix = f'laion-pop_w{number}_'
+  shard_prefix = f'JourneyDB_w{number}_'
   start_index = read_checkpoint(number)
   start_index_padded = f"n{start_index:05}_"
   pattern = os.path.join(shards, shard_prefix + start_index_padded + f"%05d.tar" + (".gz" if compression else ''))
@@ -180,7 +195,7 @@ def worker(number):
                             image_key: e['jpg'],
                             #"img_url": e['url'],
                             "alt": e['json'],
-                            "original_txt": e["txt"],
+                            # "original_txt": e["txt"],
                             "llava_1_5_caption": cap
                         }
                 sink.write(sample)
@@ -202,7 +217,7 @@ def start_worker_on_specific_gpu(gpu_id):
 
 
 def read_checkpoint(worker_number):
-    checkpoint_path = f"captioning_checkpoints/checkpoint_{worker_number}.json"
+    checkpoint_path = f"captioning_checkpoints_jdb/checkpoint_{worker_number}.json"
     try:
         with open(checkpoint_path, "r") as f:
             checkpoint = json.load(f)
@@ -212,8 +227,8 @@ def read_checkpoint(worker_number):
 
 
 def update_checkpoint(worker_number, index):
-    checkpoint_path = f"captioning_checkpoints/checkpoint_{worker_number}.json"
-    os.makedirs("captioning_checkpoints", exist_ok=True)
+    checkpoint_path = f"captioning_checkpoints_jdb/checkpoint_{worker_number}.json"
+    os.makedirs("captioning_checkpoints_jdb", exist_ok=True)
 
     checkpoint = {"index": index}
     
