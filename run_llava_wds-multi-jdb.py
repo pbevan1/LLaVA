@@ -119,7 +119,7 @@ def worker(number, args):
   print(f"stepsize: {stepsize}")
 
   start_from_tar = ( stepsize * number ) + args.start_tar
-  end_tar = stepsize * (number+1)
+  end_tar = ( stepsize * (number+1) ) + args.start_tar
   print(f"Worker {number}: Processing files from {start_from_tar} to {end_tar}.")  # Indicates the range of files being processed.
 
   def get_dataset():
@@ -131,7 +131,7 @@ def worker(number, args):
         urls = [f'pipe:aws s3 cp {url} -' for url in urls]
     print(f"Worker {number}: Loading dataset...")  # Before loading the dataset
     dataset = wds.WebDataset(urls, handler=wds.ignore_and_continue)
-    # print(urls)
+    print(urls)
     return dataset
 
   ds = get_dataset()
