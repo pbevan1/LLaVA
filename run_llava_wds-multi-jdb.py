@@ -35,19 +35,7 @@ import json
 import signal
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-
-def initDataParallelization(backend='gloo'):
-    # "MasterAddr and MasterPort, among other variables are initialized by SLURM
-
-    world_size = int(os.environ["WORLD_SIZE"])
-    ngpus_per_node = torch.cuda.device_count()
-    rank = int(os.environ['SLURM_PROCID'])
-    localGpu = rank % ngpus_per_node
-    availableDevices = os.environ['CUDA_VISIBLE_DEVICES']
-
-    print("Starting init for", rank, "World Size", world_size, "localGpu:", localGpu, "AvailableGPUs", availableDevices)
-    dist.init_process_group(backend, rank=rank, world_size=world_size)
-    return rank, localGpu, world_size
+from arguments import parse_args
 
 
 def get_gpu_status():
@@ -112,7 +100,7 @@ def get_caption(raw_image ,caption_instruction, i, tokenizer, model, image_proce
     return caption
 
 
-def worker(number):
+def worker(number, args):
   print(f"Worker {number} started.")  # Indicates the start of the worker.
 
   # Load model
@@ -124,20 +112,25 @@ def worker(number):
   print(f"Worker {number}: Model loaded.")  # Indicates successful model loading.
 
 #   stepsize = int( 520000 / 8  )
-  total_files = 10
+  total_files = ( args.end_tar - args.start_tar ) + 1
+  print(f"total files: {total_files}")
   num_processes = 8
-  stepsize = total_files // num_processes  # This will give 65
+  stepsize = total_files // num_processes
+  print(f"stepsize: {stepsize}")
 
-  start_from_tar = stepsize * number
+  start_from_tar = ( stepsize * number ) + args.start_tar
   end_tar = stepsize * (number+1)
   print(f"Worker {number}: Processing files from {start_from_tar} to {end_tar}.")  # Indicates the range of files being processed.
 
   def get_dataset():
     print(f"Worker {number}: Generating dataset URLs...")  # Before generating URLs
-    urls = [f's3://laion-west/JourneyDB_webdataset/{i:03d}.tar' for i in [x for x in list(range(end_tar)) if x >= start_from_tar]] # 231350
+    if args.dataset == 'laion-pop':
+        urls = [f'/fsx/llaver/LLaVA/pop/{i:05d}.tar' for i in [x for x in list(range(end_tar)) if x >= start_from_tar]] # 231350
+    elif args.dataset == 'JourneyDB':
+        urls = [f's3://laion-west/JourneyDB_webdataset/{i:03d}.tar' for i in [x for x in list(range(end_tar)) if x >= start_from_tar]] # 231350
+        urls = [f'pipe:aws s3 cp {url} -' for url in urls]
     print(f"Worker {number}: Loading dataset...")  # Before loading the dataset
-    urls2 = [f'pipe:aws s3 cp {url} -' for url in urls]
-    dataset = wds.WebDataset(urls2, handler=wds.ignore_and_continue)
+    dataset = wds.WebDataset(urls, handler=wds.ignore_and_continue)
     # print(urls)
     return dataset
 
@@ -153,8 +146,8 @@ def worker(number):
   maxsize=1e9
   maxcount=100000
   shards = "./shards/" 
-  shard_prefix = f'JourneyDB_w{number}_'
-  start_index = read_checkpoint(number)
+  shard_prefix = f'{args.dataset}_{args.start_tar}to{args.end_tar}_w{number}_'
+  start_index = read_checkpoint(number, args)
   start_index_padded = f"n{start_index:05}_"
   pattern = os.path.join(shards, shard_prefix + start_index_padded + f"%05d.tar" + (".gz" if compression else ''))
 
@@ -165,31 +158,40 @@ def worker(number):
 
     counter=0
     # Loading image number from checkpoint
-    while counter <= 82000:
-        for i, e in enumerate(tqdm(loader, position=number, desc=f"GPU{number}")):
-            if i < start_index:
-                continue  # Skip images that have already been processed
+    for i, e in enumerate(tqdm(loader, position=number, desc=f"GPU{number}")):
+        if i < start_index:
+            continue  # Skip images that have already been processed
 
-            s = time.time()
-            
-            try:
-                #print(type(e))
-                #print(e['jpg'])
-                #print(e["txt"])
-                # Set an alarm for 30 seconds from now
-                signal.alarm(30)
-                raw_image = Image.open(io.BytesIO(e['jpg']) ).convert("RGB") 
-                #print(type(raw_image))
-                caption_instruction = ('Can you please describe this image in up to two paragraphs? Please specify any objects within the image, backgrounds, scenery, interactions, and gestures or poses. If they are multiple of any object, please specify how many. Is there text in the image, and if so, what does it say? If there is any lighting in the image, can you identify where it is and what it looks like? What style is the image? If there are people or characters in the image, what emotions are they conveying? Please keep your descriptions factual and terse but complete. DO NOT add any unnecessary speculation about the things that are not part of the image such as "the image is inspiring to viewers" or "seeing this makes you feel joy". DO NOT add things such as "creates a unique and entertaining visual", as these descriptions are interpretations and not a part of the image itself. The description should be purely factual, with no subjective speculation. Make sure to include the style of the image, for example cartoon, photograph, 3d render etc. Start with the words "This image showcases":')
+        s = time.time()
+        
+        try:
+            #print(type(e))
+            #print(e['jpg'])
+            #print(e["txt"])
+            # Set an alarm for 30 seconds from now
+            signal.alarm(30)
+            raw_image = Image.open(io.BytesIO(e['jpg']) ).convert("RGB") 
+            #print(type(raw_image))
+            caption_instruction = ('Can you please describe this image in up to two paragraphs? Please specify any objects within the image, backgrounds, scenery, interactions, and gestures or poses. If they are multiple of any object, please specify how many. Is there text in the image, and if so, what does it say? If there is any lighting in the image, can you identify where it is and what it looks like? What style is the image? If there are people or characters in the image, what emotions are they conveying? Please keep your descriptions factual and terse but complete. DO NOT add any unnecessary speculation about the things that are not part of the image such as "the image is inspiring to viewers" or "seeing this makes you feel joy". DO NOT add things such as "creates a unique and entertaining visual", as these descriptions are interpretations and not a part of the image itself. The description should be purely factual, with no subjective speculation. Make sure to include the style of the image, for example cartoon, photograph, 3d render etc. Start with the words "This image showcases":')
 
-                cap = get_caption(raw_image, caption_instruction, i, tokenizer, model, image_processor)
-                # print(f"Worker {number} caption generated: {cap}")
+            cap = get_caption(raw_image, caption_instruction, i, tokenizer, model, image_processor)
+            # print(f"Worker {number} caption generated: {cap}")
 
-                # Reset the alarm
-                signal.alarm(0)
+            # Reset the alarm
+            signal.alarm(0)
 
-                ds_key = "%09d" % i
+            ds_key = "%09d" % i
 
+            if args.dataset == 'laion-pop':
+                sample = {
+                            "__key__": ds_key,
+                            image_key: e['jpg'],
+                            #"img_url": e['url'],
+                            "alt": e['json'],
+                            "original_txt": e["txt"],
+                            "llava_1_5_caption": cap
+                        }
+            elif args.dataset == 'JourneyDB':
                 sample = {
                             "__key__": ds_key,
                             image_key: e['jpg'],
@@ -198,26 +200,27 @@ def worker(number):
                             # "original_txt": e["txt"],
                             "llava_1_5_caption": cap
                         }
-                sink.write(sample)
-            
-                # print(f"Worker {number}: Processed image {i} in {time.time()-s} seconds.")  # Indicates each image processing time
 
-            except Exception as e:
-                print("Error creating caption")
-                print(e)
+            sink.write(sample)
+        
+            # print(f"Worker {number}: Processed image {i} in {time.time()-s} seconds.")  # Indicates each image processing time
 
-            update_checkpoint(number, i)
-            counter+=1
-        print(f"GPU {number} finished.")
+        except Exception as e:
+            print("Error creating caption")
+            print(e)
+
+        update_checkpoint(number, i, args)
+        counter+=1
+    print(f"GPU {number} finished.")
 
 
-def start_worker_on_specific_gpu(gpu_id):
+def start_worker_on_specific_gpu(gpu_id, args):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    worker(gpu_id)
+    worker(gpu_id, args)
 
 
-def read_checkpoint(worker_number):
-    checkpoint_path = f"captioning_checkpoints_jdb/checkpoint_{worker_number}.json"
+def read_checkpoint(worker_number, args):
+    checkpoint_path = f"captioning_checkpoints_{args.dataset}/checkpoint_{args.start_tar}to{args.end_tar}_w{worker_number}.json"
     try:
         with open(checkpoint_path, "r") as f:
             checkpoint = json.load(f)
@@ -226,9 +229,9 @@ def read_checkpoint(worker_number):
         return 0
 
 
-def update_checkpoint(worker_number, index):
-    checkpoint_path = f"captioning_checkpoints_jdb/checkpoint_{worker_number}.json"
-    os.makedirs("captioning_checkpoints_jdb", exist_ok=True)
+def update_checkpoint(worker_number, index, args):
+    checkpoint_path = f"captioning_checkpoints_{args.dataset}/checkpoint_{args.start_tar}to{args.end_tar}_w{worker_number}.json"
+    os.makedirs(f"captioning_checkpoints_{args.dataset}", exist_ok=True)
 
     checkpoint = {"index": index}
     
@@ -246,6 +249,8 @@ def read_api_key(file_path):
 
 
 if __name__ == "__main__":
+
+    args = parse_args()
 
     torch.cuda.device_count()
     torch.cuda.empty_cache()
@@ -266,7 +271,7 @@ if __name__ == "__main__":
 
     # Start the processes
     for n in range(num_processes):
-        process = multiprocessing.Process(target=start_worker_on_specific_gpu, args=(n,))
+        process = multiprocessing.Process(target=start_worker_on_specific_gpu, args=(n,args))
         processes.append(process)
         process.start()
 
